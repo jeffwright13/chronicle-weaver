@@ -102,9 +102,11 @@ const geminiGenerateStory = async (prompt: string): Promise<ServiceResponse<Game
   };
 };
 
-const geminiGenerateImage = async (prompt: string, style: string): Promise<ServiceResponse<string | undefined>> => {
+const geminiGenerateImage = async (prompt: string, style: string, quality: 'standard' | 'fast' = 'standard'): Promise<ServiceResponse<string | undefined>> => {
   const ai = new GoogleGenAI({ apiKey: getProviderKey(AIProvider.GEMINI) });
-  const fullPrompt = `Art Style: ${style}. Scene: ${prompt}. Cinematic lighting, evocative mood.`;
+  const fullPrompt = quality === 'fast'
+    ? `Simple ${style} style: ${prompt}. Minimal detail, basic colors.`
+    : `Art Style: ${style}. Scene: ${prompt}. Cinematic lighting, evocative mood.`;
   
   const response = await ai.models.generateContent({
     model: 'gemini-2.0-flash-exp',
@@ -179,8 +181,10 @@ const openaiGenerateStory = async (prompt: string): Promise<ServiceResponse<Game
   };
 };
 
-const openaiGenerateImage = async (prompt: string, style: string): Promise<ServiceResponse<string | undefined>> => {
-  const fullPrompt = `Art Style: ${style}. Scene: ${prompt}. Cinematic lighting, evocative mood.`;
+const openaiGenerateImage = async (prompt: string, style: string, quality: 'standard' | 'fast' = 'standard'): Promise<ServiceResponse<string | undefined>> => {
+  const fullPrompt = quality === 'fast' 
+    ? `Simple ${style} style: ${prompt}. Minimal detail, flat colors.`
+    : `Art Style: ${style}. Scene: ${prompt}. Cinematic lighting, evocative mood.`;
   
   const response = await fetch('https://api.openai.com/v1/images/generations', {
     method: 'POST',
@@ -191,14 +195,20 @@ const openaiGenerateImage = async (prompt: string, style: string): Promise<Servi
     body: JSON.stringify({
       model: 'dall-e-3',
       prompt: fullPrompt,
-      size: '1024x1024',
-      quality: 'standard'
+      size: quality === 'fast' ? '1024x1024' : '1024x1024',
+      quality: 'standard',
+      style: quality === 'fast' ? 'natural' : 'vivid'
     })
   });
 
-  if (!response.ok) throw new Error(`OpenAI API error: ${response.statusText}`);
+  if (!response.ok) {
+    const errorText = await response.text();
+    console.error('OpenAI API error response:', errorText); // Debug log
+    throw new Error(`OpenAI API error: ${response.statusText} - ${errorText}`);
+  }
   
   const data = await response.json();
+  console.log('OpenAI image response:', data); // Debug log
   
   return {
     data: data.data[0].url,
@@ -305,14 +315,15 @@ export const generateStoryBeat = async (
 export const generateImage = async (
   prompt: string,
   style: string,
-  provider: AIProvider = AIProvider.GEMINI
+  provider: AIProvider = AIProvider.GEMINI,
+  quality: 'standard' | 'fast' = 'standard'
 ): Promise<ServiceResponse<string | undefined>> => {
   try {
     switch (provider) {
       case AIProvider.GEMINI:
-        return await geminiGenerateImage(prompt, style);
+        return await geminiGenerateImage(prompt, style, quality);
       case AIProvider.OPENAI:
-        return await openaiGenerateImage(prompt, style);
+        return await openaiGenerateImage(prompt, style, quality);
       case AIProvider.CLAUDE:
         return await claudeGenerateImage();
       default:

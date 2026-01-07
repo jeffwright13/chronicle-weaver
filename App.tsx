@@ -26,6 +26,7 @@ const App: React.FC = () => {
   const [chatInput, setChatInput] = useState('');
   const [imageSize, setImageSize] = useState<ImageSize>(ImageSize.K1);
   const [useHighRes, setUseHighRes] = useState(false);
+  const [imageQuality, setImageQuality] = useState<'standard' | 'fast'>('standard');
   const [textOnlyMode, setTextOnlyMode] = useState(false);
   const [textCase, setTextCase] = useState<TextCase>('normal');
   const [fontSize, setFontSize] = useState(20);
@@ -165,10 +166,24 @@ const App: React.FC = () => {
       systemDirectives = "Visual style MUST be '8-bit pixel art, Atari 2600 aesthetic, grainy CRT monitor effect, retro 1980s VHS quality'. Narrative: 1980s mystery, analog tech, synthesizer atmosphere.";
     }
 
-    const prompt = `Start a new choose-your-own-adventure in the "${genre}" genre. ${systemDirectives} Return output as JSON matching the GameState schema.`;
+    const prompt = `Start a new choose-your-own-adventure in the "${genre}" genre. ${systemDirectives} 
+
+IMPORTANT: Return an engaging, specific opening scene with vivid details. Do NOT use generic phrases like "The story begins..." Instead, start directly with the action and atmosphere.
+
+Return output as JSON matching the GameState schema with these fields:
+- storyText: A compelling opening scene (3-4 sentences)
+- choices: 2-3 specific action choices
+- inventory: Array of starting items (can be empty)
+- currentQuest: The main objective
+- visualPrompt: Brief description for image generation
+- worldStyle: "${genre}" style
+- genre: "${genre}"`;
     
     try {
+      console.log('Starting game with provider:', selectedProvider); // Debug log
       const response = await generateStoryBeat(prompt, selectedProvider);
+      console.log('Initial gameState:', response.data); // Debug log
+      console.log('Story text:', response.data.storyText); // Debug log
       setGameState(response.data);
       updateUsage(response.usage.inputTokens, response.usage.outputTokens, 0, 0, selectedProvider);
       
@@ -185,7 +200,9 @@ const App: React.FC = () => {
       setSaves(prev => [newSlot, ...prev]);
       
       if (!textOnlyMode) {
+        // Generate image but don't add story to history - let main UI show it
         await updateImage(response.data, 'The Beginning');
+        setLoading(false); // Ensure loading is false
       } else {
         setHistory(prev => [{ text: response.data.storyText, choice: 'Arrival', state: response.data }, ...prev]);
         setLoading(false);
@@ -228,9 +245,12 @@ const App: React.FC = () => {
     }
     setImageLoading(true);
     try {
-      const response = await generateImage(state.visualPrompt, state.worldStyle, selectedProvider);
+      const response = await generateImage(state.visualPrompt, state.worldStyle, selectedProvider, imageQuality);
+      console.log('Image response:', response); // Debug log
       if (response.data) {
+        // Add to history for all cases after initial setup
         setHistory(prev => [{ text: state.storyText, choice: choiceMade, imageUrl: response.data, state }, ...prev]);
+        setLoading(false);
         updateUsage(
           response.usage.inputTokens, 
           response.usage.outputTokens, 
@@ -337,6 +357,27 @@ const App: React.FC = () => {
                 </div>
               </div>
             </div>
+            <div className="mb-12">
+              <div className="bg-slate-950/40 border border-slate-800/60 rounded-2xl p-6">
+                <div className="flex justify-between items-center">
+                  <span className="text-[10px] font-black uppercase tracking-widest text-slate-400">IMAGE QUALITY</span>
+                  <div className="flex gap-2">
+                    {[
+                      { val: 'standard' as const, lab: 'Standard' },
+                      { val: 'fast' as const, lab: 'Fast' }
+                    ].map(quality => (
+                      <button 
+                        key={quality.val} 
+                        onClick={() => setImageQuality(quality.val)} 
+                        className={`px-3 py-2 text-[10px] rounded-lg border font-black transition-all ${imageQuality === quality.val ? 'bg-indigo-600 border-indigo-500 text-white' : 'border-slate-700 text-slate-500 bg-slate-900/60 hover:text-slate-300'}`}
+                      >
+                        {quality.lab}
+                      </button>
+                    ))}
+                  </div>
+                </div>
+              </div>
+            </div>
             <div className="space-y-8">
               <label className="text-xs font-black uppercase tracking-[0.3em] text-slate-500 block mb-2">Initialize Thread Genre</label>
               <div className="grid grid-cols-1 sm:grid-cols-2 gap-5">
@@ -426,7 +467,7 @@ const App: React.FC = () => {
               <button onClick={() => setShowQuotaPanel(!showQuotaPanel)} className="text-[10px] font-black text-indigo-400 hover:text-indigo-300 transition-colors uppercase tracking-widest underline decoration-2 underline-offset-4">BILLING</button>
             </div>
             <div className="flex justify-between items-end">
-              <span className={`text-xl font-mono font-bold ${isBudgetExceeded ? 'text-rose-400' : isBudgetWarning ? 'text-amber-400' : 'text-slate-100'}`}>${usageStats.estimatedCost.toFixed(3)}</span>
+              <span className={`text-xl font-mono font-bold ${isBudgetExceeded ? 'text-rose-400' : isBudgetWarning ? 'text-amber-400' : 'text-slate-100'}`}>${usageStats.estimatedCost.toFixed(2)}</span>
             </div>
           </div>
           <div className="space-y-4">
@@ -457,21 +498,57 @@ const App: React.FC = () => {
               <div className="space-y-2">
                 <div className="flex justify-between">
                   <span className="text-[10px] font-black uppercase tracking-widest">SIZE</span>
-                  <span className="text-[10px] font-mono text-slate-500 font-bold">{fontSize}px</span>
+                  <div className="flex items-center gap-2">
+                    <input 
+                      type="number" 
+                      min="8" 
+                      max="36" 
+                      value={fontSize} 
+                      onChange={(e) => {
+                        const val = Math.min(36, Math.max(8, parseInt(e.target.value) || 8));
+                        setFontSize(val);
+                        localStorage.setItem('PREF_FONT_SIZE', val.toString());
+                      }}
+                      className="w-12 px-1 py-0.5 text-[10px] font-mono text-center bg-slate-800 border border-slate-700 rounded text-slate-300"
+                    />
+                    <span className="text-[10px] font-mono text-slate-500 font-bold">px</span>
+                  </div>
                 </div>
-                <input 
-                  type="range" 
-                  min="14" 
-                  max="44" 
-                  step="2"
-                  value={fontSize} 
-                  onChange={(e) => {
-                    const val = parseInt(e.target.value);
-                    setFontSize(val);
-                    localStorage.setItem('PREF_FONT_SIZE', val.toString());
-                  }}
-                  className="w-full h-1 bg-slate-800 rounded-lg appearance-none cursor-pointer accent-indigo-500"
-                />
+                <div className="flex items-center gap-2">
+                  <button 
+                    onClick={() => {
+                      const val = Math.max(8, fontSize - 1);
+                      setFontSize(val);
+                      localStorage.setItem('PREF_FONT_SIZE', val.toString());
+                    }}
+                    className="px-2 py-1 text-[10px] bg-slate-800 border border-slate-700 rounded text-slate-300 hover:bg-slate-700 transition-colors"
+                  >
+                    -
+                  </button>
+                  <input 
+                    type="range" 
+                    min="8" 
+                    max="36" 
+                    step="1"
+                    value={fontSize} 
+                    onChange={(e) => {
+                      const val = parseInt(e.target.value);
+                      setFontSize(val);
+                      localStorage.setItem('PREF_FONT_SIZE', val.toString());
+                    }}
+                    className="flex-1 h-1 bg-slate-800 rounded-lg appearance-none cursor-pointer accent-indigo-500"
+                  />
+                  <button 
+                    onClick={() => {
+                      const val = Math.min(36, fontSize + 1);
+                      setFontSize(val);
+                      localStorage.setItem('PREF_FONT_SIZE', val.toString());
+                    }}
+                    className="px-2 py-1 text-[10px] bg-slate-800 border border-slate-700 rounded text-slate-300 hover:bg-slate-700 transition-colors"
+                  >
+                    +
+                  </button>
+                </div>
               </div>
             </div>
           </div>
@@ -510,7 +587,7 @@ const App: React.FC = () => {
                 {gameState.choices.map((choice, i) => (
                   <button key={i} onClick={() => makeChoice(choice)} className={`group relative p-7 text-left rounded-[2rem] border transition-all hover:translate-x-2 active:scale-[0.98] flex items-center gap-8 ${is80sMode ? 'bg-rose-950/5 border-rose-900/30 hover:bg-rose-900/20 hover:border-rose-600' : 'bg-slate-900/30 border-slate-800/60 hover:bg-slate-800/80 hover:border-indigo-500/50 hover:shadow-xl hover:shadow-indigo-950/10'}`}>
                     <span className={`flex-shrink-0 w-10 h-10 rounded-2xl flex items-center justify-center text-xs font-black border transition-colors ${is80sMode ? 'bg-rose-950 border-rose-800 text-rose-500 group-hover:border-rose-400 font-80s text-[9px]' : 'bg-slate-950 border-slate-700 text-indigo-400 group-hover:border-indigo-500'}`}>{i + 1}</span>
-                    <span className={`text-lg font-bold tracking-tight ${is80sMode ? 'font-80s text-[11px] leading-6' : ''}`}>{applyTextCase(choice)}</span>
+                    <span className={`font-bold tracking-tight ${is80sMode ? 'font-80s leading-6' : ''}`} style={{ fontSize: `${fontSize * 0.9}px` }}>{applyTextCase(choice)}</span>
                     <div className={`ml-auto opacity-0 group-hover:opacity-100 transition-opacity translate-x-4 group-hover:translate-x-0 duration-300 ${is80sMode ? 'text-rose-500' : 'text-indigo-500'}`}><svg className="w-6 h-6" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth="3" d="M13 7l5 5m0 0l-5 5m5-5H6"></path></svg></div>
                   </button>
                 ))}
