@@ -4,7 +4,7 @@ import { AIProvider } from '../../types.ts';
 
 // Mock the AI service functions for testing
 jest.mock('../../aiService.ts', () => ({
-  calculateEstimatedCost: jest.requireActual('../../aiService.ts').calculateEstimatedCost,
+  calculateEstimatedCost: jest.requireActual<typeof import('../../aiService.ts').calculateEstimatedCost>('../../aiService.ts').calculateEstimatedCost,
   generateStoryBeat: jest.fn(),
   generateImage: jest.fn(),
   getChatResponse: jest.fn(),
