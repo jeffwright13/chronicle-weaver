@@ -1,7 +1,7 @@
 
 import React, { useState, useEffect, useRef } from 'react';
-import { GameState, ImageSize, ChatMessage, GameHistoryItem, SaveSlot, UsageStats } from './types';
-import { generateStoryBeat, generateImage, getChatResponse, calculateEstimatedCost } from './geminiService';
+import { GameState, ImageSize, ChatMessage, GameHistoryItem, SaveSlot, UsageStats, AIProvider } from './types';
+import { generateStoryBeat, generateImage, getChatResponse, calculateEstimatedCost } from './aiService';
 
 const STORAGE_KEY = 'CHRONICLE_WEAVER_SAVES_V2';
 const DEFAULT_BUDGET_THRESHOLD = 5.00;
@@ -26,9 +26,10 @@ const App: React.FC = () => {
   const [chatInput, setChatInput] = useState('');
   const [imageSize, setImageSize] = useState<ImageSize>(ImageSize.K1);
   const [useHighRes, setUseHighRes] = useState(false);
+  const [imageQuality, setImageQuality] = useState<'standard' | 'fast'>('standard');
   const [textOnlyMode, setTextOnlyMode] = useState(false);
   const [textCase, setTextCase] = useState<TextCase>('normal');
-  const [fontSize, setFontSize] = useState(20);
+  const [fontSize, setFontSize] = useState(16);
   const [showKeyModal, setShowKeyModal] = useState(false);
   const [gameStarted, setGameStarted] = useState(false);
   const [customGenre, setCustomGenre] = useState('');
@@ -36,8 +37,52 @@ const App: React.FC = () => {
   const [currentSaveId, setCurrentSaveId] = useState<string | null>(null);
   const [usageStats, setUsageStats] = useState<UsageStats>(initialUsageStats);
   const [budgetThreshold, setBudgetThreshold] = useState(DEFAULT_BUDGET_THRESHOLD);
+  const [isArchivesCollapsed, setIsArchivesCollapsed] = useState(true);
+  const [isLeftPanelCollapsed, setIsLeftPanelCollapsed] = useState(true);
+
+  // Autosave functionality
+  useEffect(() => {
+    if (gameState && currentSaveId) {
+      const autosaveData = {
+        gameState,
+        history,
+        usageStats,
+        lastSaved: Date.now()
+      };
+      localStorage.setItem(`autosave_${currentSaveId}`, JSON.stringify(autosaveData));
+    }
+  }, [gameState, history, usageStats, currentSaveId]);
+
+  // Load autosave on mount
+  useEffect(() => {
+    const storedFs = localStorage.getItem('PREF_FONT_SIZE');
+    if (storedFs) setFontSize(parseInt(storedFs));
+    
+    // Load any existing autosaves
+    const loadAutosaves = () => {
+      const autosaves: any[] = [];
+      for (let i = 0; i < localStorage.length; i++) {
+        const key = localStorage.key(i);
+        if (key?.startsWith('autosave_')) {
+          try {
+            const data = JSON.parse(localStorage.getItem(key) || '{}');
+            autosaves.push({ id: key.replace('autosave_', ''), ...data });
+          } catch (e) {
+            console.warn('Failed to parse autosave:', key);
+          }
+        }
+      }
+      return autosaves;
+    };
+    
+    const autosaves = loadAutosaves();
+    if (autosaves.length > 0) {
+      console.log('Found autosaves:', autosaves.length);
+    }
+  }, []);
   const [showQuotaPanel, setShowQuotaPanel] = useState(false);
   const [isFullscreen, setIsFullscreen] = useState(false);
+  const [selectedProvider, setSelectedProvider] = useState<AIProvider>(AIProvider.OPENAI);
 
   const chatEndRef = useRef<HTMLDivElement>(null);
 
@@ -106,9 +151,9 @@ const App: React.FC = () => {
     chatEndRef.current?.scrollIntoView({ behavior: 'smooth' });
   }, [chatMessages, chatLoading]);
 
-  const updateUsage = (input: number, output: number, images: number = 0, premiumImages: number = 0, modelType: 'flash' | 'pro' = 'flash') => {
+  const updateUsage = (input: number, output: number, images: number = 0, premiumImages: number = 0, provider: AIProvider = selectedProvider) => {
     setUsageStats(prev => {
-      const newCost = calculateEstimatedCost(input, output, images, premiumImages, modelType);
+      const newCost = calculateEstimatedCost(input, output, images, premiumImages, provider);
       return {
         inputTokens: prev.inputTokens + input,
         outputTokens: prev.outputTokens + output,
@@ -164,12 +209,26 @@ const App: React.FC = () => {
       systemDirectives = "Visual style MUST be '8-bit pixel art, Atari 2600 aesthetic, grainy CRT monitor effect, retro 1980s VHS quality'. Narrative: 1980s mystery, analog tech, synthesizer atmosphere.";
     }
 
-    const prompt = `Start a new choose-your-own-adventure in the "${genre}" genre. ${systemDirectives} Return output as JSON matching the GameState schema.`;
+    const prompt = `Start a new choose-your-own-adventure in the "${genre}" genre. ${systemDirectives} 
+
+IMPORTANT: Return an engaging, specific opening scene with vivid details. Do NOT use generic phrases like "The story begins..." Instead, start directly with the action and atmosphere.
+
+Return output as JSON matching the GameState schema with these fields:
+- storyText: A compelling opening scene (3-4 sentences)
+- choices: 2-3 specific action choices
+- inventory: Array of starting items (can be empty)
+- currentQuest: The main objective
+- visualPrompt: Brief description for image generation
+- worldStyle: "${genre}" style
+- genre: "${genre}"`;
     
     try {
-      const response = await generateStoryBeat(prompt);
+      console.log('Starting game with provider:', selectedProvider); // Debug log
+      const response = await generateStoryBeat(prompt, selectedProvider);
+      console.log('Initial gameState:', response.data); // Debug log
+      console.log('Story text:', response.data.storyText); // Debug log
       setGameState(response.data);
-      updateUsage(response.usage.inputTokens, response.usage.outputTokens);
+      updateUsage(response.usage.inputTokens, response.usage.outputTokens, 0, 0, selectedProvider);
       
       const newSlot: SaveSlot = {
         id: newSaveId,
@@ -184,7 +243,9 @@ const App: React.FC = () => {
       setSaves(prev => [newSlot, ...prev]);
       
       if (!textOnlyMode) {
+        // Generate image but don't add story to history - let main UI show it
         await updateImage(response.data, 'The Beginning');
+        setLoading(false); // Ensure loading is false
       } else {
         setHistory(prev => [{ text: response.data.storyText, choice: 'Arrival', state: response.data }, ...prev]);
         setLoading(false);
@@ -227,15 +288,18 @@ const App: React.FC = () => {
     }
     setImageLoading(true);
     try {
-      const response = await generateImage(state.visualPrompt, state.worldStyle, imageSize, useHighRes);
+      const response = await generateImage(state.visualPrompt, state.worldStyle, selectedProvider, imageQuality);
+      console.log('Image response:', response); // Debug log
       if (response.data) {
+        // Add to history for all cases after initial setup
         setHistory(prev => [{ text: state.storyText, choice: choiceMade, imageUrl: response.data, state }, ...prev]);
+        setLoading(false);
         updateUsage(
           response.usage.inputTokens, 
           response.usage.outputTokens, 
           useHighRes ? 0 : 1, 
           useHighRes ? 1 : 0,
-          useHighRes ? 'pro' : 'flash'
+          selectedProvider
         );
       }
     } catch (error: any) {
@@ -251,9 +315,9 @@ const App: React.FC = () => {
     setLoading(true);
     const prompt = `Game State: ${JSON.stringify(gameState)}. Choice: "${choice}". Advance the plot. Maintain the genre consistency. Return new state in JSON.`;
     try {
-      const response = await generateStoryBeat(prompt, gameState);
+      const response = await generateStoryBeat(prompt, selectedProvider);
       setGameState(response.data);
-      updateUsage(response.usage.inputTokens, response.usage.outputTokens);
+      updateUsage(response.usage.inputTokens, response.usage.outputTokens, 0, 0, selectedProvider);
       if (!textOnlyMode) {
         await updateImage(response.data, choice);
       } else {
@@ -272,9 +336,9 @@ const App: React.FC = () => {
     setChatMessages(prev => [...prev, { role: 'user', text: userMsg }]);
     setChatLoading(true);
     try {
-      const response = await getChatResponse(userMsg, gameState);
+      const response = await getChatResponse(userMsg, gameState, selectedProvider);
       setChatMessages(prev => [...prev, { role: 'model', text: response.data }]);
-      updateUsage(response.usage.inputTokens, response.usage.outputTokens, 0, 0, 'pro');
+      updateUsage(response.usage.inputTokens, response.usage.outputTokens, 0, 0, selectedProvider);
     } catch (error) {
       handleError(error);
     } finally {
@@ -282,14 +346,17 @@ const App: React.FC = () => {
     }
   };
 
-  const applyTextCase = (text: string) => {
+  const applyTextCase = (text: string | any) => {
+    if (typeof text !== 'string') {
+      return String(text || '');
+    }
     if (textCase === 'uppercase') return text.toUpperCase();
     if (textCase === 'lowercase') return text.toLowerCase();
     return text;
   };
 
   const getGenreFontClass = () => {
-    if (!gameState) return 'font-inter';
+    if (!gameState || !gameState.genre) return 'font-inter';
     const genre = gameState.genre.toLowerCase();
     if (genre.includes('fantasy')) return 'font-fantasy';
     if (genre.includes('80s') || genre.includes('horror')) return 'font-80s text-xs';
@@ -314,6 +381,49 @@ const App: React.FC = () => {
                 The loom of infinite destinies. Start a new thread and witness reality unfold.
               </p>
             </header>
+            <div className="mb-12">
+              <div className="bg-slate-950/40 border border-slate-800/60 rounded-2xl p-6">
+                <div className="flex justify-between items-center">
+                  <span className="text-[10px] font-black uppercase tracking-widest text-slate-400">AI PROVIDER</span>
+                  <div className="flex gap-2">
+                    {[
+                      { val: AIProvider.GEMINI, lab: 'Gemini' },
+                      { val: AIProvider.OPENAI, lab: 'OpenAI' },
+                      { val: AIProvider.CLAUDE, lab: 'Claude' }
+                    ].map(provider => (
+                      <button 
+                        key={provider.val} 
+                        onClick={() => setSelectedProvider(provider.val)} 
+                        className={`px-3 py-2 text-[10px] rounded-lg border font-black transition-all ${selectedProvider === provider.val ? 'bg-indigo-600 border-indigo-500 text-white' : 'border-slate-700 text-slate-500 bg-slate-900/60 hover:text-slate-300'}`}
+                      >
+                        {provider.lab}
+                      </button>
+                    ))}
+                  </div>
+                </div>
+              </div>
+            </div>
+            <div className="mb-12">
+              <div className="bg-slate-950/40 border border-slate-800/60 rounded-2xl p-6">
+                <div className="flex justify-between items-center">
+                  <span className="text-[10px] font-black uppercase tracking-widest text-slate-400">IMAGE QUALITY</span>
+                  <div className="flex gap-2">
+                    {[
+                      { val: 'standard' as const, lab: 'Standard' },
+                      { val: 'fast' as const, lab: 'Fast' }
+                    ].map(quality => (
+                      <button 
+                        key={quality.val} 
+                        onClick={() => setImageQuality(quality.val)} 
+                        className={`px-3 py-2 text-[10px] rounded-lg border font-black transition-all ${imageQuality === quality.val ? 'bg-indigo-600 border-indigo-500 text-white' : 'border-slate-700 text-slate-500 bg-slate-900/60 hover:text-slate-300'}`}
+                      >
+                        {quality.lab}
+                      </button>
+                    ))}
+                  </div>
+                </div>
+              </div>
+            </div>
             <div className="space-y-8">
               <label className="text-xs font-black uppercase tracking-[0.3em] text-slate-500 block mb-2">Initialize Thread Genre</label>
               <div className="grid grid-cols-1 sm:grid-cols-2 gap-5">
@@ -368,8 +478,23 @@ const App: React.FC = () => {
   return (
     <div className={`flex h-screen overflow-hidden transition-all duration-1000 ${is80sMode ? 'bg-[#0a0505] text-[#ff4b4b] crt-effect' : 'bg-[#020617] text-slate-200'}`}>
       
-      <aside className={`w-80 border-r p-7 flex flex-col gap-8 hidden md:flex transition-colors duration-500 ${is80sMode ? 'bg-[#1a0f0f]/60 border-rose-950' : 'bg-slate-900/60 border-slate-800'}`}>
-        <div className="flex items-center justify-between">
+      <aside className={`${isLeftPanelCollapsed ? 'w-14' : 'w-80'} border-r flex-col hidden md:flex transition-all duration-300 overflow-hidden ${is80sMode ? 'bg-[#1a0f0f]/60 border-rose-950' : 'bg-slate-900/60 border-slate-800'}`}>
+        {/* Toggle Button */}
+        <div className="flex justify-center p-3">
+          <button 
+            onClick={() => setIsLeftPanelCollapsed(!isLeftPanelCollapsed)}
+            className={`p-2 rounded-lg transition-all ${is80sMode ? 'bg-rose-950 hover:bg-rose-900 text-rose-400' : 'bg-slate-800 hover:bg-slate-700 text-slate-400'}`}
+            title={isLeftPanelCollapsed ? "Show Controls" : "Hide Controls"}
+          >
+            <svg className={`w-5 h-5 transition-transform duration-300 ${isLeftPanelCollapsed ? '' : 'rotate-180'}`} fill="none" stroke="currentColor" viewBox="0 0 24 24">
+              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M9 5l7 7-7 7"></path>
+            </svg>
+          </button>
+        </div>
+        
+        {!isLeftPanelCollapsed && (
+          <div className="flex flex-col gap-8 p-7">
+            <div className="flex items-center justify-between">
           <div className="flex items-center gap-3">
             <div className={`w-3 h-3 rounded-full animate-pulse ${is80sMode ? 'bg-rose-600 shadow-[0_0_12px_#e11d48]' : 'bg-emerald-500 shadow-[0_0_12px_#10b981]'}`}></div>
             <h2 className="text-[10px] font-black uppercase tracking-[0.3em] opacity-50">Loom Status</h2>
@@ -390,7 +515,7 @@ const App: React.FC = () => {
         <section className="flex-1 overflow-hidden flex flex-col">
           <h3 className={`font-black mb-4 flex items-center gap-3 text-[10px] uppercase tracking-[0.2em] ${is80sMode ? 'text-rose-400' : 'text-indigo-400'}`}><svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2.5" d="M20 7l-8-4-8 4m16 0l-8 4m8-4v10l-8 4m0-10L4 7m8 4v10M4 7v10l8 4"></path></svg>CARRYINGS</h3>
           <div className="flex-1 overflow-y-auto space-y-3 custom-scrollbar pr-3">
-            {gameState?.inventory.map((item, i) => (
+            {(gameState?.inventory || []).map((item, i) => (
               <div key={i} className={`p-4 rounded-2xl border text-[11px] font-black tracking-tight flex items-center gap-4 transition-all ${is80sMode ? 'bg-rose-950/10 border-rose-900/20 text-rose-300' : 'bg-slate-800/40 border-slate-700/50 text-slate-300'}`}><div className={`w-1.5 h-1.5 rounded-full ${is80sMode ? 'bg-rose-600' : 'bg-indigo-500'}`}></div>{applyTextCase(item)}</div>
             ))}
           </div>
@@ -403,7 +528,7 @@ const App: React.FC = () => {
               <button onClick={() => setShowQuotaPanel(!showQuotaPanel)} className="text-[10px] font-black text-indigo-400 hover:text-indigo-300 transition-colors uppercase tracking-widest underline decoration-2 underline-offset-4">BILLING</button>
             </div>
             <div className="flex justify-between items-end">
-              <span className={`text-xl font-mono font-bold ${isBudgetExceeded ? 'text-rose-400' : isBudgetWarning ? 'text-amber-400' : 'text-slate-100'}`}>${usageStats.estimatedCost.toFixed(3)}</span>
+              <span className={`text-xl font-mono font-bold ${isBudgetExceeded ? 'text-rose-400' : isBudgetWarning ? 'text-amber-400' : 'text-slate-100'}`}>${usageStats.estimatedCost.toFixed(2)}</span>
             </div>
           </div>
           <div className="space-y-4">
@@ -434,29 +559,67 @@ const App: React.FC = () => {
               <div className="space-y-2">
                 <div className="flex justify-between">
                   <span className="text-[10px] font-black uppercase tracking-widest">SIZE</span>
-                  <span className="text-[10px] font-mono text-slate-500 font-bold">{fontSize}px</span>
+                  <div className="flex items-center gap-2">
+                    <input 
+                      type="number" 
+                      min="8" 
+                      max="36" 
+                      value={fontSize} 
+                      onChange={(e) => {
+                        const val = Math.min(36, Math.max(8, parseInt(e.target.value) || 8));
+                        setFontSize(val);
+                        localStorage.setItem('PREF_FONT_SIZE', val.toString());
+                      }}
+                      className="w-12 px-1 py-0.5 text-[10px] font-mono text-center bg-slate-800 border border-slate-700 rounded text-slate-300"
+                    />
+                    <span className="text-[10px] font-mono text-slate-500 font-bold">px</span>
+                  </div>
                 </div>
-                <input 
-                  type="range" 
-                  min="14" 
-                  max="44" 
-                  step="2"
-                  value={fontSize} 
-                  onChange={(e) => {
-                    const val = parseInt(e.target.value);
-                    setFontSize(val);
-                    localStorage.setItem('PREF_FONT_SIZE', val.toString());
-                  }}
-                  className="w-full h-1 bg-slate-800 rounded-lg appearance-none cursor-pointer accent-indigo-500"
-                />
+                <div className="flex items-center gap-2">
+                  <button 
+                    onClick={() => {
+                      const val = Math.max(8, fontSize - 1);
+                      setFontSize(val);
+                      localStorage.setItem('PREF_FONT_SIZE', val.toString());
+                    }}
+                    className="px-2 py-1 text-[10px] bg-slate-800 border border-slate-700 rounded text-slate-300 hover:bg-slate-700 transition-colors"
+                  >
+                    -
+                  </button>
+                  <input 
+                    type="range" 
+                    min="8" 
+                    max="36" 
+                    step="1"
+                    value={fontSize} 
+                    onChange={(e) => {
+                      const val = parseInt(e.target.value);
+                      setFontSize(val);
+                      localStorage.setItem('PREF_FONT_SIZE', val.toString());
+                    }}
+                    className="flex-1 h-1 bg-slate-800 rounded-lg appearance-none cursor-pointer accent-indigo-500"
+                  />
+                  <button 
+                    onClick={() => {
+                      const val = Math.min(36, fontSize + 1);
+                      setFontSize(val);
+                      localStorage.setItem('PREF_FONT_SIZE', val.toString());
+                    }}
+                    className="px-2 py-1 text-[10px] bg-slate-800 border border-slate-700 rounded text-slate-300 hover:bg-slate-700 transition-colors"
+                  >
+                    +
+                  </button>
+                </div>
               </div>
             </div>
           </div>
         </section>
+          </div>
+        )}
       </aside>
 
       <main className="flex-1 flex flex-col overflow-y-auto relative bg-[#010413]">
-        <div className="max-w-5xl mx-auto w-full p-8 lg:p-16 lg:px-24 space-y-20 pb-40">
+        <div className="max-w-7xl mx-auto w-full p-8 lg:p-16 lg:px-24 space-y-20 pb-40">
           {!textOnlyMode && (
             <div className="relative group overflow-visible">
               {imageLoading ? (
@@ -485,9 +648,9 @@ const App: React.FC = () => {
             {!loading && gameState?.choices && (
               <div className="grid grid-cols-1 gap-5 animate-in fade-in slide-in-from-bottom-12 duration-1000">
                 {gameState.choices.map((choice, i) => (
-                  <button key={i} onClick={() => makeChoice(choice)} className={`group relative p-7 text-left rounded-[2rem] border transition-all hover:translate-x-2 active:scale-[0.98] flex items-center gap-8 ${is80sMode ? 'bg-rose-950/5 border-rose-900/30 hover:bg-rose-900/20 hover:border-rose-600' : 'bg-slate-900/30 border-slate-800/60 hover:bg-slate-800/80 hover:border-indigo-500/50 hover:shadow-xl hover:shadow-indigo-950/10'}`}>
+                  <button key={i} onClick={() => makeChoice(choice)} className={`group relative p-7 text-left rounded-[2rem] border transition-all hover:translate-x-2 active:scale-[0.98] flex items-center gap-8 ${is80sMode ? 'bg-rose-950/5 border-rose-900/30 hover:bg-rose-900/20 hover:border-rose-600' : 'bg-slate-900/30 border-slate-800/60 hover:bg-slate-800/80 hover:border-indigo-500/50 hover:shadow-xl hover:shadow-indigo-950/10'} ${getGenreFontClass()}`}>
                     <span className={`flex-shrink-0 w-10 h-10 rounded-2xl flex items-center justify-center text-xs font-black border transition-colors ${is80sMode ? 'bg-rose-950 border-rose-800 text-rose-500 group-hover:border-rose-400 font-80s text-[9px]' : 'bg-slate-950 border-slate-700 text-indigo-400 group-hover:border-indigo-500'}`}>{i + 1}</span>
-                    <span className={`text-lg font-bold tracking-tight ${is80sMode ? 'font-80s text-[11px] leading-6' : ''}`}>{applyTextCase(choice)}</span>
+                    <span className={`font-bold tracking-tight ${is80sMode ? 'font-80s leading-6' : ''}`} style={{ fontSize: `${fontSize * 0.9}px` }}>{applyTextCase(choice)}</span>
                     <div className={`ml-auto opacity-0 group-hover:opacity-100 transition-opacity translate-x-4 group-hover:translate-x-0 duration-300 ${is80sMode ? 'text-rose-500' : 'text-indigo-500'}`}><svg className="w-6 h-6" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth="3" d="M13 7l5 5m0 0l-5 5m5-5H6"></path></svg></div>
                   </button>
                 ))}
@@ -529,10 +692,10 @@ const App: React.FC = () => {
                            <p className="text-[11px] font-black uppercase tracking-widest text-slate-300">Decision: <span className="text-indigo-400 ml-2">{item.choice || "Automatic Transition"}</span></p>
                         </div>
                         <p className={`text-base leading-[1.8] ${is80sMode ? 'font-data text-rose-300' : 'font-noir italic text-slate-400'}`}>{applyTextCase(item.text.substring(0, 450))}...</p>
-                        {item.state && item.state.inventory.length > 0 && (
+                        {item.state && (item.state.inventory || []).length > 0 && (
                           <div className="flex flex-wrap gap-2 pt-4 border-t border-slate-800/30">
                              <span className="text-[9px] font-black uppercase tracking-[0.2em] text-slate-600 mr-2 self-center">Held Items:</span>
-                             {item.state.inventory.map((loot, li) => (
+                             {(item.state.inventory || []).map((loot, li) => (
                                <span key={li} className="text-[9px] font-black px-3 py-1 rounded-xl bg-slate-900 border border-slate-800/60 text-slate-500 group-hover/item:text-slate-400 group-hover/item:border-slate-700 transition-colors">{applyTextCase(loot)}</span>
                              ))}
                           </div>
@@ -547,21 +710,57 @@ const App: React.FC = () => {
         </div>
       </main>
 
-      <aside className={`w-96 border-l flex flex-col hidden lg:flex transition-colors duration-500 ${is80sMode ? 'bg-[#1a0f0f]/80 border-rose-950' : 'bg-slate-900/70 border-slate-800 shadow-[-20px_0_50px_rgba(0,0,0,0.5)]'}`}>
-        <div className="p-10 border-b border-slate-800/50">
-          <h2 className={`text-[10px] font-black uppercase tracking-[0.4em] flex items-center gap-4 ${is80sMode ? 'text-rose-500 font-80s text-[9px]' : 'text-indigo-400'}`}>
-            <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2.5" d="M12 6.253v13m0-13C10.832 5.477 9.246 5 7.5 5S4.168 5.477 3 6.253v13C4.168 18.477 5.754 18 7.5 18s3.332.477 4.5 1.253m0-13C13.168 5.477 14.754 5 16.5 5S19.832 5.477 21 6.253v13C19.832 18.477 18.246 18 16.5 18c-1.746 0-3.332.477-4.5 1.253"></path></svg>
-            THE LOOM ORACLE
-          </h2>
+      <aside className={`${isArchivesCollapsed ? 'w-14' : 'w-96'} border-l flex-col hidden lg:flex transition-all duration-300 overflow-hidden ${is80sMode ? 'bg-[#1a0f0f]/80 border-rose-950' : 'bg-slate-900/70 border-slate-800 shadow-[-20px_0_50px_rgba(0,0,0,0.5)]'}`}>
+        {/* Toggle Button */}
+        <div className="flex justify-center p-3">
+          <button 
+            onClick={() => setIsArchivesCollapsed(!isArchivesCollapsed)}
+            className={`p-2 rounded-lg transition-all ${is80sMode ? 'bg-rose-950 hover:bg-rose-900 text-rose-400' : 'bg-slate-800 hover:bg-slate-700 text-slate-400'}`}
+            title={isArchivesCollapsed ? "Show Archives" : "Hide Archives"}
+          >
+            <svg className={`w-5 h-5 transition-transform duration-300 ${isArchivesCollapsed ? 'rotate-180' : ''}`} fill="none" stroke="currentColor" viewBox="0 0 24 24">
+              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M9 5l7 7-7 7"></path>
+            </svg>
+          </button>
         </div>
-        <div className="flex-1 overflow-y-auto p-8 space-y-8 custom-scrollbar">
-          {chatMessages.map((msg, i) => (
-            <div key={i} className={`flex ${msg.role === 'user' ? 'justify-end' : 'justify-start'}`}>
-              <div className={`max-w-[90%] p-5 rounded-[1.8rem] text-[12px] leading-[1.7] ${msg.role === 'user' ? `${is80sMode ? 'bg-rose-900 text-white shadow-[0_8px_20px_#e11d4822]' : 'bg-indigo-600 text-white shadow-xl shadow-indigo-950/20'} rounded-br-none` : `${is80sMode ? 'bg-rose-950/40 border-rose-900/30 font-data' : 'bg-slate-800/80 border-slate-700/50 font-inter'} text-slate-200 border rounded-bl-none shadow-sm`}`}>
-                {applyTextCase(msg.text)}
+        
+        {!isArchivesCollapsed && (
+          <div className="flex flex-col flex-1 overflow-hidden">
+            <div className="p-10 border-b border-slate-800/50">
+              <h2 className={`text-[10px] font-black uppercase tracking-[0.4em] flex items-center gap-4 ${is80sMode ? 'text-rose-500 font-80s text-[9px]' : 'text-indigo-400'}`}>
+                <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2.5" d="M12 6.253v13m0-13C10.832 5.477 9.246 5 7.5 5S4.168 5.477 3 6.253v13C4.168 18.477 5.754 18 7.5 18s3.332.477 4.5 1.253m0-13C13.168 5.477 14.754 5 16.5 5S19.832 5.477 21 6.253v13C19.832 18.477 18.246 18 16.5 18c-1.746 0-3.332.477-4.5 1.253"></path></svg>
+                STORY ARCHIVES
+              </h2>
+            </div>
+            <div className="flex-1 overflow-y-auto p-8 space-y-8 custom-scrollbar">
+          {history.length > 0 ? (
+            history.map((item, i) => (
+              <div key={i} className={`group relative p-6 rounded-2xl border transition-all ${is80sMode ? 'bg-rose-950/20 border-rose-900/30 hover:bg-rose-950/40' : 'bg-slate-900/40 border-slate-800/60 hover:bg-slate-800/80'}`}>
+                <div className="flex items-start gap-4">
+                  <div className={`flex-shrink-0 w-8 h-8 rounded-xl flex items-center justify-center text-xs font-black ${is80sMode ? 'bg-rose-950 border-rose-800 text-rose-500' : 'bg-slate-950 border-slate-700 text-indigo-400'}`}>
+                    {history.length - i}
+                  </div>
+                  <div className="flex-1 min-w-0">
+                    <div className={`text-xs font-black uppercase tracking-widest mb-2 ${is80sMode ? 'text-rose-600' : 'text-indigo-400'}`}>
+                      {item.choice}
+                    </div>
+                    <div className={`text-sm leading-relaxed ${is80sMode ? 'text-rose-200' : 'text-slate-300'}`}>
+                      {applyTextCase(item.text)}
+                    </div>
+                    {item.imageUrl && (
+                      <img src={item.imageUrl} alt="Scene" className="mt-3 rounded-xl w-full h-32 object-cover border border-slate-700/50" />
+                    )}
+                  </div>
+                </div>
+              </div>
+            ))
+          ) : (
+            <div className="text-center py-12">
+              <div className={`text-sm ${is80sMode ? 'text-rose-600' : 'text-slate-600'}`}>
+                Your story archives will appear here as you make choices...
               </div>
             </div>
-          ))}
+          )}
           {chatLoading && (
             <div className="flex justify-start">
               <div className={`p-5 rounded-[1.8rem] border flex gap-2 items-center ${is80sMode ? 'bg-rose-950/40 border-rose-900/30 shadow-[0_0_15px_#e11d4822]' : 'bg-slate-800/80 border-slate-700/50'}`}>
@@ -574,12 +773,8 @@ const App: React.FC = () => {
           )}
           <div ref={chatEndRef} />
         </div>
-        <div className="p-8 border-t border-slate-800 bg-slate-950/40 backdrop-blur-xl">
-          <div className="relative">
-            <textarea value={chatInput} onChange={(e) => setChatInput(e.target.value)} onKeyDown={(e) => { if (e.key === 'Enter' && !e.shiftKey) { e.preventDefault(); sendChatMessage(); } }} placeholder="Direct query to the loom..." className={`w-full border rounded-[1.8rem] py-5 px-6 pr-16 text-xs focus:outline-none transition-all resize-none h-28 placeholder:text-slate-700 ${is80sMode ? 'bg-rose-950/20 border-rose-900 focus:ring-1 focus:ring-rose-500 font-mono uppercase' : 'bg-slate-950/80 border-slate-800 focus:ring-2 focus:ring-indigo-500 font-inter'}`} />
-            <button onClick={sendChatMessage} disabled={!chatInput.trim() || chatLoading} className={`absolute bottom-5 right-5 p-3 rounded-2xl transition-all ${is80sMode ? 'bg-rose-600 hover:bg-rose-500 text-white shadow-xl shadow-rose-950/30' : 'bg-indigo-600 hover:bg-indigo-500 text-white shadow-xl shadow-indigo-950/30'} disabled:opacity-20`}><svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth="3" d="M14 5l7 7-7 7M5 5l7 7-7 7"></path></svg></button>
           </div>
-        </div>
+        )}
       </aside>
 
       {showQuotaPanel && (

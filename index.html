@@ -1,14 +1,16 @@
-
 <!DOCTYPE html>
 <html lang="en">
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>Chronicle Weaver</title>
+    <title>Chronicle Weaver - v2.0</title>
+    <meta http-equiv="Cache-Control" content="no-cache, no-store, must-revalidate">
+    <meta http-equiv="Pragma" content="no-cache">
+    <meta http-equiv="Expires" content="0">
     <script src="https://cdn.tailwindcss.com"></script>
     <link rel="preconnect" href="https://fonts.googleapis.com">
     <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
-    <link href="https://fonts.googleapis.com/css2?family=Cinzel:wght@400;700&family=Courier+Prime&family=Inter:wght@400;700;900&family=Press+Start+2P&family=VT323&display=swap" rel="stylesheet">
+    <link href="https://fonts.googleapis.com/css2?family=Cormorant+Garamond:wght@400;700&family=Cinzel:wght@400;700&family=Courier+Prime&family=Inter:wght@400;700;900&family=Press+Start+2P&family=VT323&display=swap" rel="stylesheet">
     <style>
         body {
             background-color: #0f172a;
@@ -31,8 +33,8 @@
             background: #64748b;
         }
 
-        /* Thematic Fonts */
-        .font-fantasy { font-family: 'Cinzel', serif; }
+        /* Thematic Fonts - Updated v2 */
+        .font-fantasy { font-family: 'Cormorant Garamond', serif !important; }
         .font-80s { font-family: 'Press Start 2P', cursive; line-height: 1.8; }
         .font-data { font-family: 'VT323', monospace; font-size: 1.25rem; }
         .font-noir { font-family: 'Courier Prime', monospace; }
@@ -58,20 +60,9 @@
             pointer-events: none;
         }
     </style>
-<script type="importmap">
-{
-  "imports": {
-    "react": "https://esm.sh/react@^19.2.3",
-    "react-dom/": "https://esm.sh/react-dom@^19.2.3/",
-    "react/": "https://esm.sh/react@^19.2.3/",
-    "@google/genai": "https://esm.sh/@google/genai@^1.34.0"
-  }
-}
-</script>
-<link rel="stylesheet" href="/index.css">
+    <script type="module" src="/index.tsx"></script>
 </head>
 <body>
     <div id="root"></div>
-<script type="module" src="/index.tsx"></script>
 </body>
 </html>

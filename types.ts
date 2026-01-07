@@ -1,4 +1,10 @@
 
+export enum AIProvider {
+  GEMINI = 'gemini',
+  OPENAI = 'openai',
+  CLAUDE = 'claude'
+}
+
 export enum ImageSize {
   K1 = '1K',
   K2 = '2K',
