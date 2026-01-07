@@ -1,7 +1,7 @@
 
 import React, { useState, useEffect, useRef } from 'react';
 import { GameState, ImageSize, ChatMessage, GameHistoryItem, SaveSlot, UsageStats, AIProvider } from './types';
-import { generateStoryBeat, generateImage, getChatResponse, calculateEstimatedCost } from './aiService';
+import { generateStoryBeat, generateImage, getChatResponse, calculateEstimatedCost, getStoredApiKey, setStoredApiKey, hasApiKey } from './aiService';
 
 const STORAGE_KEY = 'CHRONICLE_WEAVER_SAVES_V2';
 const DEFAULT_BUDGET_THRESHOLD = 5.00;
@@ -31,6 +31,11 @@ const App: React.FC = () => {
   const [textCase, setTextCase] = useState<TextCase>('normal');
   const [fontSize, setFontSize] = useState(16);
   const [showKeyModal, setShowKeyModal] = useState(false);
+  const [apiKeyInputs, setApiKeyInputs] = useState({
+    [AIProvider.OPENAI]: '',
+    [AIProvider.GEMINI]: '',
+    [AIProvider.CLAUDE]: ''
+  });
   const [gameStarted, setGameStarted] = useState(false);
   const [customGenre, setCustomGenre] = useState('');
   const [saves, setSaves] = useState<SaveSlot[]>([]);
@@ -174,14 +179,20 @@ const App: React.FC = () => {
     }
   };
 
-  const handleKeySelection = async () => {
-    try {
-      // @ts-ignore
-      await window.aistudio.openSelectKey();
-      setShowKeyModal(false);
-    } catch (e) {
-      console.error("Failed to open key selection dialog", e);
-    }
+  const handleOpenKeyModal = () => {
+    setApiKeyInputs({
+      [AIProvider.OPENAI]: getStoredApiKey(AIProvider.OPENAI),
+      [AIProvider.GEMINI]: getStoredApiKey(AIProvider.GEMINI),
+      [AIProvider.CLAUDE]: getStoredApiKey(AIProvider.CLAUDE)
+    });
+    setShowKeyModal(true);
+  };
+
+  const handleSaveApiKeys = () => {
+    setStoredApiKey(AIProvider.OPENAI, apiKeyInputs[AIProvider.OPENAI]);
+    setStoredApiKey(AIProvider.GEMINI, apiKeyInputs[AIProvider.GEMINI]);
+    setStoredApiKey(AIProvider.CLAUDE, apiKeyInputs[AIProvider.CLAUDE]);
+    setShowKeyModal(false);
   };
 
   const handleError = (error: any) => {
@@ -381,7 +392,7 @@ Return output as JSON matching the GameState schema with these fields:
                 The loom of infinite destinies. Start a new thread and witness reality unfold.
               </p>
             </header>
-            <div className="mb-12">
+            <div className="mb-6">
               <div className="bg-slate-950/40 border border-slate-800/60 rounded-2xl p-6">
                 <div className="flex justify-between items-center">
                   <span className="text-[10px] font-black uppercase tracking-widest text-slate-400">AI PROVIDER</span>
@@ -394,14 +405,32 @@ Return output as JSON matching the GameState schema with these fields:
                       <button 
                         key={provider.val} 
                         onClick={() => setSelectedProvider(provider.val)} 
-                        className={`px-3 py-2 text-[10px] rounded-lg border font-black transition-all ${selectedProvider === provider.val ? 'bg-indigo-600 border-indigo-500 text-white' : 'border-slate-700 text-slate-500 bg-slate-900/60 hover:text-slate-300'}`}
+                        className={`px-3 py-2 text-[10px] rounded-lg border font-black transition-all ${selectedProvider === provider.val ? 'bg-indigo-600 border-indigo-500 text-white' : 'border-slate-700 text-slate-500 bg-slate-900/60 hover:text-slate-300'} ${!hasApiKey(provider.val) ? 'opacity-50' : ''}`}
                       >
                         {provider.lab}
+                        {hasApiKey(provider.val) && <span className="ml-1 text-emerald-400">✓</span>}
                       </button>
                     ))}
                   </div>
                 </div>
               </div>
+            </div>
+            <div className="mb-12">
+              <button 
+                onClick={handleOpenKeyModal}
+                className="w-full bg-slate-950/40 border border-slate-800/60 rounded-2xl p-6 hover:bg-slate-800/40 hover:border-indigo-500/50 transition-all group text-left"
+              >
+                <div className="flex justify-between items-center">
+                  <div className="flex items-center gap-3">
+                    <svg className="w-5 h-5 text-indigo-400" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M15 7a2 2 0 012 2m4 0a6 6 0 01-7.743 5.743L11 17H9v2H7v2H4a1 1 0 01-1-1v-2.586a1 1 0 01.293-.707l5.964-5.964A6 6 0 1121 9z"></path></svg>
+                    <span className="text-[10px] font-black uppercase tracking-widest text-slate-400 group-hover:text-slate-300">API KEYS</span>
+                  </div>
+                  <span className="text-xs text-slate-500 group-hover:text-indigo-400 transition-colors">Configure →</span>
+                </div>
+                {!hasApiKey(selectedProvider) && (
+                  <p className="text-xs text-amber-400/80 mt-3">⚠️ No API key configured for {selectedProvider}. Click to add your key.</p>
+                )}
+              </button>
             </div>
             <div className="mb-12">
               <div className="bg-slate-950/40 border border-slate-800/60 rounded-2xl p-6">
@@ -471,6 +500,77 @@ Return output as JSON matching the GameState schema with these fields:
             </div>
           </div>
         </div>
+        
+        {showKeyModal && (
+          <div className="fixed inset-0 z-[110] flex items-center justify-center p-8 bg-slate-950/95 backdrop-blur-2xl animate-in fade-in">
+            <div className="bg-slate-900 border border-slate-800 max-w-xl w-full p-10 rounded-[3rem] shadow-[0_0_100px_rgba(0,0,0,0.8)] transform animate-in zoom-in-95">
+              <div className="flex items-center gap-4 mb-8">
+                <div className="w-14 h-14 bg-indigo-600/20 rounded-2xl flex items-center justify-center border border-indigo-500/30">
+                  <svg className="w-7 h-7 text-indigo-500" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2.5" d="M15 7a2 2 0 012 2m4 0a6 6 0 01-7.743 5.743L11 17H9v2H7v2H4a1 1 0 01-1-1v-2.586a1 1 0 01.293-.707l5.964-5.964A6 6 0 1121 9z"></path></svg>
+                </div>
+                <div>
+                  <h3 className="text-2xl font-black text-slate-100 tracking-tight">API Keys</h3>
+                  <p className="text-slate-400 text-sm">Enter your API keys to use AI providers</p>
+                </div>
+              </div>
+              
+              <div className="space-y-5 mb-8">
+                <div>
+                  <label className="block text-xs font-bold text-slate-400 uppercase tracking-wider mb-2">OpenAI API Key</label>
+                  <input
+                    type="password"
+                    value={apiKeyInputs[AIProvider.OPENAI]}
+                    onChange={(e) => setApiKeyInputs(prev => ({ ...prev, [AIProvider.OPENAI]: e.target.value }))}
+                    placeholder="sk-..."
+                    className="w-full px-4 py-3 bg-slate-800 border border-slate-700 rounded-xl text-slate-200 placeholder-slate-500 focus:outline-none focus:border-indigo-500 focus:ring-1 focus:ring-indigo-500 font-mono text-sm"
+                  />
+                  <p className="text-xs text-slate-500 mt-1">Required for story generation and DALL-E images</p>
+                </div>
+                
+                <div>
+                  <label className="block text-xs font-bold text-slate-400 uppercase tracking-wider mb-2">Google Gemini API Key</label>
+                  <input
+                    type="password"
+                    value={apiKeyInputs[AIProvider.GEMINI]}
+                    onChange={(e) => setApiKeyInputs(prev => ({ ...prev, [AIProvider.GEMINI]: e.target.value }))}
+                    placeholder="AIza..."
+                    className="w-full px-4 py-3 bg-slate-800 border border-slate-700 rounded-xl text-slate-200 placeholder-slate-500 focus:outline-none focus:border-indigo-500 focus:ring-1 focus:ring-indigo-500 font-mono text-sm"
+                  />
+                  <p className="text-xs text-slate-500 mt-1">Alternative provider for story generation</p>
+                </div>
+                
+                <div>
+                  <label className="block text-xs font-bold text-slate-400 uppercase tracking-wider mb-2">Anthropic Claude API Key</label>
+                  <input
+                    type="password"
+                    value={apiKeyInputs[AIProvider.CLAUDE]}
+                    onChange={(e) => setApiKeyInputs(prev => ({ ...prev, [AIProvider.CLAUDE]: e.target.value }))}
+                    placeholder="sk-ant-..."
+                    className="w-full px-4 py-3 bg-slate-800 border border-slate-700 rounded-xl text-slate-200 placeholder-slate-500 focus:outline-none focus:border-indigo-500 focus:ring-1 focus:ring-indigo-500 font-mono text-sm"
+                  />
+                  <p className="text-xs text-slate-500 mt-1">Alternative provider (text only, no images)</p>
+                </div>
+              </div>
+              
+              <div className="flex gap-3">
+                <button 
+                  onClick={() => setShowKeyModal(false)} 
+                  className="flex-1 py-4 bg-slate-800 hover:bg-slate-700 text-slate-300 font-bold uppercase tracking-wider text-xs rounded-2xl transition-all"
+                >
+                  Cancel
+                </button>
+                <button 
+                  onClick={handleSaveApiKeys} 
+                  className="flex-1 py-4 bg-indigo-600 hover:bg-indigo-500 text-white font-bold uppercase tracking-wider text-xs rounded-2xl transition-all shadow-lg shadow-indigo-950/40"
+                >
+                  Save Keys
+                </button>
+              </div>
+              
+              <p className="text-xs text-slate-500 text-center mt-6">Keys are stored locally in your browser and never sent to any server except the respective AI providers.</p>
+            </div>
+          </div>
+        )}
       </div>
     );
   }
@@ -814,13 +914,71 @@ Return output as JSON matching the GameState schema with these fields:
 
       {showKeyModal && (
         <div className="fixed inset-0 z-[110] flex items-center justify-center p-8 bg-slate-950/95 backdrop-blur-2xl animate-in fade-in">
-          <div className="bg-slate-900 border border-slate-800 max-w-lg w-full p-16 rounded-[4rem] shadow-[0_0_100px_rgba(0,0,0,0.8)] text-center transform animate-in zoom-in-95">
-            <div className="w-20 h-20 bg-indigo-600/20 rounded-[2rem] flex items-center justify-center mx-auto mb-10 border border-indigo-500/30">
-               <svg className="w-10 h-10 text-indigo-500" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2.5" d="M15 7a2 2 0 012 2m4 0a6 6 0 01-7.743 5.743L11 17H9v2H7v2H4a1 1 0 01-1-1v-2.586a1 1 0 01.293-.707l5.964-5.964A6 6 0 1121 9z"></path></svg>
+          <div className="bg-slate-900 border border-slate-800 max-w-xl w-full p-10 rounded-[3rem] shadow-[0_0_100px_rgba(0,0,0,0.8)] transform animate-in zoom-in-95">
+            <div className="flex items-center gap-4 mb-8">
+              <div className="w-14 h-14 bg-indigo-600/20 rounded-2xl flex items-center justify-center border border-indigo-500/30">
+                <svg className="w-7 h-7 text-indigo-500" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2.5" d="M15 7a2 2 0 012 2m4 0a6 6 0 01-7.743 5.743L11 17H9v2H7v2H4a1 1 0 01-1-1v-2.586a1 1 0 01.293-.707l5.964-5.964A6 6 0 1121 9z"></path></svg>
+              </div>
+              <div>
+                <h3 className="text-2xl font-black text-slate-100 tracking-tight">API Keys</h3>
+                <p className="text-slate-400 text-sm">Enter your API keys to use AI providers</p>
+              </div>
             </div>
-            <h3 className="text-3xl font-black text-slate-100 mb-6 tracking-tight uppercase tracking-widest">Access Protocol</h3>
-            <p className="text-slate-400 mb-12 text-base leading-relaxed">High-fidelity threads require an active Gemini API key to proceed through the loom of fate.</p>
-            <button onClick={handleKeySelection} className="w-full py-6 bg-indigo-600 hover:bg-indigo-500 text-white font-black uppercase tracking-[0.4em] text-xs rounded-3xl transition-all shadow-2xl shadow-indigo-950/40">AUTHENTICATE</button>
+            
+            <div className="space-y-5 mb-8">
+              <div>
+                <label className="block text-xs font-bold text-slate-400 uppercase tracking-wider mb-2">OpenAI API Key</label>
+                <input
+                  type="password"
+                  value={apiKeyInputs[AIProvider.OPENAI]}
+                  onChange={(e) => setApiKeyInputs(prev => ({ ...prev, [AIProvider.OPENAI]: e.target.value }))}
+                  placeholder="sk-..."
+                  className="w-full px-4 py-3 bg-slate-800 border border-slate-700 rounded-xl text-slate-200 placeholder-slate-500 focus:outline-none focus:border-indigo-500 focus:ring-1 focus:ring-indigo-500 font-mono text-sm"
+                />
+                <p className="text-xs text-slate-500 mt-1">Required for story generation and DALL-E images</p>
+              </div>
+              
+              <div>
+                <label className="block text-xs font-bold text-slate-400 uppercase tracking-wider mb-2">Google Gemini API Key</label>
+                <input
+                  type="password"
+                  value={apiKeyInputs[AIProvider.GEMINI]}
+                  onChange={(e) => setApiKeyInputs(prev => ({ ...prev, [AIProvider.GEMINI]: e.target.value }))}
+                  placeholder="AIza..."
+                  className="w-full px-4 py-3 bg-slate-800 border border-slate-700 rounded-xl text-slate-200 placeholder-slate-500 focus:outline-none focus:border-indigo-500 focus:ring-1 focus:ring-indigo-500 font-mono text-sm"
+                />
+                <p className="text-xs text-slate-500 mt-1">Alternative provider for story generation</p>
+              </div>
+              
+              <div>
+                <label className="block text-xs font-bold text-slate-400 uppercase tracking-wider mb-2">Anthropic Claude API Key</label>
+                <input
+                  type="password"
+                  value={apiKeyInputs[AIProvider.CLAUDE]}
+                  onChange={(e) => setApiKeyInputs(prev => ({ ...prev, [AIProvider.CLAUDE]: e.target.value }))}
+                  placeholder="sk-ant-..."
+                  className="w-full px-4 py-3 bg-slate-800 border border-slate-700 rounded-xl text-slate-200 placeholder-slate-500 focus:outline-none focus:border-indigo-500 focus:ring-1 focus:ring-indigo-500 font-mono text-sm"
+                />
+                <p className="text-xs text-slate-500 mt-1">Alternative provider (text only, no images)</p>
+              </div>
+            </div>
+            
+            <div className="flex gap-3">
+              <button 
+                onClick={() => setShowKeyModal(false)} 
+                className="flex-1 py-4 bg-slate-800 hover:bg-slate-700 text-slate-300 font-bold uppercase tracking-wider text-xs rounded-2xl transition-all"
+              >
+                Cancel
+              </button>
+              <button 
+                onClick={handleSaveApiKeys} 
+                className="flex-1 py-4 bg-indigo-600 hover:bg-indigo-500 text-white font-bold uppercase tracking-wider text-xs rounded-2xl transition-all shadow-lg shadow-indigo-950/40"
+              >
+                Save Keys
+              </button>
+            </div>
+            
+            <p className="text-xs text-slate-500 text-center mt-6">Keys are stored locally in your browser and never sent to any server except the respective AI providers.</p>
           </div>
         </div>
       )}

@@ -53,17 +53,33 @@ const handleClaudeError = (error: any) => {
   throw error;
 };
 
-const getProviderKey = (provider: AIProvider): string => {
-  switch (provider) {
-    case AIProvider.GEMINI:
-      return process.env.GEMINI_API_KEY || '';
-    case AIProvider.OPENAI:
-      return process.env.OPENAI_API_KEY || '';
-    case AIProvider.CLAUDE:
-      return process.env.CLAUDE_API_KEY || '';
-    default:
-      return '';
+const API_KEY_STORAGE_PREFIX = 'CHRONICLE_WEAVER_API_KEY_';
+
+export const getStoredApiKey = (provider: AIProvider): string => {
+  const key = localStorage.getItem(`${API_KEY_STORAGE_PREFIX}${provider}`);
+  return key || '';
+};
+
+export const setStoredApiKey = (provider: AIProvider, key: string): void => {
+  if (key) {
+    localStorage.setItem(`${API_KEY_STORAGE_PREFIX}${provider}`, key);
+  } else {
+    localStorage.removeItem(`${API_KEY_STORAGE_PREFIX}${provider}`);
   }
+};
+
+export const hasApiKey = (provider: AIProvider): boolean => {
+  return getStoredApiKey(provider).length > 0;
+};
+
+export const clearAllApiKeys = (): void => {
+  Object.values(AIProvider).forEach(provider => {
+    localStorage.removeItem(`${API_KEY_STORAGE_PREFIX}${provider}`);
+  });
+};
+
+const getProviderKey = (provider: AIProvider): string => {
+  return getStoredApiKey(provider);
 };
 
 // Gemini Functions

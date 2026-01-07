@@ -4,17 +4,20 @@ import react from '@vitejs/plugin-react';
 
 export default defineConfig(({ mode }) => {
     const env = loadEnv(mode, '.', '');
+    const isProduction = mode === 'production';
+    
     return {
+      base: isProduction ? '/chronicle-weaver/' : '/',
       server: {
         port: 3000,
         host: '0.0.0.0',
       },
       plugins: [react()],
       define: {
-        'process.env.API_KEY': JSON.stringify(env.GEMINI_API_KEY),
-        'process.env.GEMINI_API_KEY': JSON.stringify(env.GEMINI_API_KEY),
-        'process.env.OPENAI_API_KEY': JSON.stringify(env.OPENAI_API_KEY),
-        'process.env.CLAUDE_API_KEY': JSON.stringify(env.CLAUDE_API_KEY)
+        'process.env.API_KEY': JSON.stringify(''),
+        'process.env.GEMINI_API_KEY': JSON.stringify(''),
+        'process.env.OPENAI_API_KEY': JSON.stringify(''),
+        'process.env.CLAUDE_API_KEY': JSON.stringify('')
       },
       resolve: {
         alias: {
