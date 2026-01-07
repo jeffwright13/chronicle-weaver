@@ -1,7 +1,7 @@
 
 import React, { useState, useEffect, useRef } from 'react';
-import { GameState, ImageSize, ChatMessage, GameHistoryItem, SaveSlot, UsageStats } from './types';
-import { generateStoryBeat, generateImage, getChatResponse, calculateEstimatedCost } from './geminiService';
+import { GameState, ImageSize, ChatMessage, GameHistoryItem, SaveSlot, UsageStats, AIProvider } from './types';
+import { generateStoryBeat, generateImage, getChatResponse, calculateEstimatedCost } from './aiService';
 
 const STORAGE_KEY = 'CHRONICLE_WEAVER_SAVES_V2';
 const DEFAULT_BUDGET_THRESHOLD = 5.00;
@@ -38,6 +38,7 @@ const App: React.FC = () => {
   const [budgetThreshold, setBudgetThreshold] = useState(DEFAULT_BUDGET_THRESHOLD);
   const [showQuotaPanel, setShowQuotaPanel] = useState(false);
   const [isFullscreen, setIsFullscreen] = useState(false);
+  const [selectedProvider, setSelectedProvider] = useState<AIProvider>(AIProvider.GEMINI);
 
   const chatEndRef = useRef<HTMLDivElement>(null);
 
@@ -106,9 +107,9 @@ const App: React.FC = () => {
     chatEndRef.current?.scrollIntoView({ behavior: 'smooth' });
   }, [chatMessages, chatLoading]);
 
-  const updateUsage = (input: number, output: number, images: number = 0, premiumImages: number = 0, modelType: 'flash' | 'pro' = 'flash') => {
+  const updateUsage = (input: number, output: number, images: number = 0, premiumImages: number = 0, provider: AIProvider = selectedProvider) => {
     setUsageStats(prev => {
-      const newCost = calculateEstimatedCost(input, output, images, premiumImages, modelType);
+      const newCost = calculateEstimatedCost(input, output, images, premiumImages, provider);
       return {
         inputTokens: prev.inputTokens + input,
         outputTokens: prev.outputTokens + output,
@@ -167,9 +168,9 @@ const App: React.FC = () => {
     const prompt = `Start a new choose-your-own-adventure in the "${genre}" genre. ${systemDirectives} Return output as JSON matching the GameState schema.`;
     
     try {
-      const response = await generateStoryBeat(prompt);
+      const response = await generateStoryBeat(prompt, selectedProvider);
       setGameState(response.data);
-      updateUsage(response.usage.inputTokens, response.usage.outputTokens);
+      updateUsage(response.usage.inputTokens, response.usage.outputTokens, 0, 0, selectedProvider);
       
       const newSlot: SaveSlot = {
         id: newSaveId,
@@ -227,7 +228,7 @@ const App: React.FC = () => {
     }
     setImageLoading(true);
     try {
-      const response = await generateImage(state.visualPrompt, state.worldStyle, imageSize, useHighRes);
+      const response = await generateImage(state.visualPrompt, state.worldStyle, selectedProvider);
       if (response.data) {
         setHistory(prev => [{ text: state.storyText, choice: choiceMade, imageUrl: response.data, state }, ...prev]);
         updateUsage(
@@ -235,7 +236,7 @@ const App: React.FC = () => {
           response.usage.outputTokens, 
           useHighRes ? 0 : 1, 
           useHighRes ? 1 : 0,
-          useHighRes ? 'pro' : 'flash'
+          selectedProvider
         );
       }
     } catch (error: any) {
@@ -251,9 +252,9 @@ const App: React.FC = () => {
     setLoading(true);
     const prompt = `Game State: ${JSON.stringify(gameState)}. Choice: "${choice}". Advance the plot. Maintain the genre consistency. Return new state in JSON.`;
     try {
-      const response = await generateStoryBeat(prompt, gameState);
+      const response = await generateStoryBeat(prompt, selectedProvider);
       setGameState(response.data);
-      updateUsage(response.usage.inputTokens, response.usage.outputTokens);
+      updateUsage(response.usage.inputTokens, response.usage.outputTokens, 0, 0, selectedProvider);
       if (!textOnlyMode) {
         await updateImage(response.data, choice);
       } else {
@@ -272,9 +273,9 @@ const App: React.FC = () => {
     setChatMessages(prev => [...prev, { role: 'user', text: userMsg }]);
     setChatLoading(true);
     try {
-      const response = await getChatResponse(userMsg, gameState);
+      const response = await getChatResponse(userMsg, gameState, selectedProvider);
       setChatMessages(prev => [...prev, { role: 'model', text: response.data }]);
-      updateUsage(response.usage.inputTokens, response.usage.outputTokens, 0, 0, 'pro');
+      updateUsage(response.usage.inputTokens, response.usage.outputTokens, 0, 0, selectedProvider);
     } catch (error) {
       handleError(error);
     } finally {
@@ -289,7 +290,7 @@ const App: React.FC = () => {
   };
 
   const getGenreFontClass = () => {
-    if (!gameState) return 'font-inter';
+    if (!gameState || !gameState.genre) return 'font-inter';
     const genre = gameState.genre.toLowerCase();
     if (genre.includes('fantasy')) return 'font-fantasy';
     if (genre.includes('80s') || genre.includes('horror')) return 'font-80s text-xs';
@@ -314,6 +315,28 @@ const App: React.FC = () => {
                 The loom of infinite destinies. Start a new thread and witness reality unfold.
               </p>
             </header>
+            <div className="mb-12">
+              <div className="bg-slate-950/40 border border-slate-800/60 rounded-2xl p-6">
+                <div className="flex justify-between items-center">
+                  <span className="text-[10px] font-black uppercase tracking-widest text-slate-400">AI PROVIDER</span>
+                  <div className="flex gap-2">
+                    {[
+                      { val: AIProvider.GEMINI, lab: 'Gemini' },
+                      { val: AIProvider.OPENAI, lab: 'OpenAI' },
+                      { val: AIProvider.CLAUDE, lab: 'Claude' }
+                    ].map(provider => (
+                      <button 
+                        key={provider.val} 
+                        onClick={() => setSelectedProvider(provider.val)} 
+                        className={`px-3 py-2 text-[10px] rounded-lg border font-black transition-all ${selectedProvider === provider.val ? 'bg-indigo-600 border-indigo-500 text-white' : 'border-slate-700 text-slate-500 bg-slate-900/60 hover:text-slate-300'}`}
+                      >
+                        {provider.lab}
+                      </button>
+                    ))}
+                  </div>
+                </div>
+              </div>
+            </div>
             <div className="space-y-8">
               <label className="text-xs font-black uppercase tracking-[0.3em] text-slate-500 block mb-2">Initialize Thread Genre</label>
               <div className="grid grid-cols-1 sm:grid-cols-2 gap-5">
@@ -390,7 +413,7 @@ const App: React.FC = () => {
         <section className="flex-1 overflow-hidden flex flex-col">
           <h3 className={`font-black mb-4 flex items-center gap-3 text-[10px] uppercase tracking-[0.2em] ${is80sMode ? 'text-rose-400' : 'text-indigo-400'}`}><svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2.5" d="M20 7l-8-4-8 4m16 0l-8 4m8-4v10l-8 4m0-10L4 7m8 4v10M4 7v10l8 4"></path></svg>CARRYINGS</h3>
           <div className="flex-1 overflow-y-auto space-y-3 custom-scrollbar pr-3">
-            {gameState?.inventory.map((item, i) => (
+            {(gameState?.inventory || []).map((item, i) => (
               <div key={i} className={`p-4 rounded-2xl border text-[11px] font-black tracking-tight flex items-center gap-4 transition-all ${is80sMode ? 'bg-rose-950/10 border-rose-900/20 text-rose-300' : 'bg-slate-800/40 border-slate-700/50 text-slate-300'}`}><div className={`w-1.5 h-1.5 rounded-full ${is80sMode ? 'bg-rose-600' : 'bg-indigo-500'}`}></div>{applyTextCase(item)}</div>
             ))}
           </div>
@@ -529,10 +552,10 @@ const App: React.FC = () => {
                            <p className="text-[11px] font-black uppercase tracking-widest text-slate-300">Decision: <span className="text-indigo-400 ml-2">{item.choice || "Automatic Transition"}</span></p>
                         </div>
                         <p className={`text-base leading-[1.8] ${is80sMode ? 'font-data text-rose-300' : 'font-noir italic text-slate-400'}`}>{applyTextCase(item.text.substring(0, 450))}...</p>
-                        {item.state && item.state.inventory.length > 0 && (
+                        {item.state && (item.state.inventory || []).length > 0 && (
                           <div className="flex flex-wrap gap-2 pt-4 border-t border-slate-800/30">
                              <span className="text-[9px] font-black uppercase tracking-[0.2em] text-slate-600 mr-2 self-center">Held Items:</span>
-                             {item.state.inventory.map((loot, li) => (
+                             {(item.state.inventory || []).map((loot, li) => (
                                <span key={li} className="text-[9px] font-black px-3 py-1 rounded-xl bg-slate-900 border border-slate-800/60 text-slate-500 group-hover/item:text-slate-400 group-hover/item:border-slate-700 transition-colors">{applyTextCase(loot)}</span>
                              ))}
                           </div>
